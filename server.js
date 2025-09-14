@@ -96,67 +96,83 @@ async function getBrowser() {
   return browser;
 }
 
-// دالة التعليق على الفيديو (نسخة محسّنة وصبورة)
+// دالة التعليق على الفيديو (النسخة النهائية الأكثر قوة)
 async function commentOnVideo(videoUrl) {
   console.log(`▶️ Starting comment process for: ${videoUrl}`);
   const b = await getBrowser();
   const page = await b.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
+  await page.setViewport({ width: 1366, height: 768 }); // زيادة حجم الشاشة قليلاً
   await page.setRequestInterception(true);
-  page.on('request', (req) => (['image', 'font', 'media'].includes(req.resourceType()) ? req.abort() : req.continue()));
+  page.on('request', (req) => (['image', 'font', 'media', 'stylesheet'].includes(req.resourceType()) ? req.abort() : req.continue()));
 
   try {
     await page.goto(videoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // --- جديد: التعامل مع نافذة الموافقة على ملفات تعريف الارتباط ---
+    // التعامل مع نافذة الموافقة على ملفات تعريف الارتباط
     try {
-      const consentButtonSelector = 'button[aria-label="Accept all"]';
-      const consentButton = await page.waitForSelector(consentButtonSelector, { timeout: 5000 });
+      const consentButton = await page.waitForSelector('button[aria-label*="Accept"], button[aria-label*="Alle akzeptieren"]', { timeout: 7000 });
       if (consentButton) {
-        console.log("Found cookie consent button. Clicking...");
+        console.log("Cookie consent button found. Clicking...");
         await consentButton.click();
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
         console.log("Cookie consent accepted.");
       }
     } catch (e) {
-      console.log("Cookie consent pop-up not found, continuing...");
+      console.log("Cookie consent pop-up not found or timed out, continuing...");
     }
-    // -------------------------------------------------------------
+    
 
-    // --- جديد: التحقق إذا كانت التعليقات معطلة ---
-    const commentsDisabled = await page.evaluate(() => {
-      const disabledText = document.querySelector('#message.ytd-message-renderer');
-      return disabledText && disabledText.innerText.toLowerCase().includes('comments are turned off');
-    });
-    if (commentsDisabled) {
-      throw new Error("Comments are turned off for this video.");
-    }
-    // -------------------------------------------------
-
-    // تحسين: التمرير إلى قسم التعليقات مباشرة
+    // التمرير إلى قسم التعليقات والانتظار حتى يكون مرئيًا
     await page.evaluate(() => {
       const commentsElement = document.querySelector('#comments');
       if (commentsElement) {
         commentsElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     });
+    await page.waitForSelector('#comments', { visible: true, timeout: 20000 });
 
-    // زيادة مدة الانتظار واستخدام محددات أكثر قوة
+    // --- استراتيجية جديدة لفتح صندوق التعليقات ---
+    console.log("Attempting to click comment placeholder...");
+    await page.click('#comments'); // نقرة أولية على قسم التعليقات لتفعيله
+    await new Promise(resolve => setTimeout(resolve, 1000)); // انتظار بسيط
+    
     const placeholderSelector = '#placeholder-area';
-    await page.waitForSelector(placeholderSelector, { timeout: 20000 }); // زيادة الوقت إلى 20 ثانية
+    await page.waitForSelector(placeholderSelector, { timeout: 15000 });
     await page.click(placeholderSelector);
+    console.log("Comment placeholder clicked.");
+    // ---------------------------------------------
 
-    const editorSelector = '#contenteditable-root';
-    await page.waitForSelector(editorSelector, { timeout: 15000 });
-    await page.type(editorSelector, CONFIG.commentText, { delay: 50 });
+    // --- استراتيجية جديدة للكتابة ---
+    console.log("Waiting for comment editor to appear...");
+    const editorSelector = '#contenteditable-root.yt-formatted-string';
+    await page.waitForSelector(editorSelector, { visible: true, timeout: 20000 });
+    
+    // طريقة كتابة أكثر موثوقية
+    await page.focus(editorSelector);
+    await page.keyboard.type(CONFIG.commentText, { delay: 50 });
+    console.log("Comment text typed.");
+    // ---------------------------------
 
-    const submitButtonSelector = '#submit-button';
+    // انتظار زر الإرسال حتى يصبح قابلاً للنقر
+    const submitButtonSelector = '#submit-button.ytd-commentbox';
     await page.waitForSelector(submitButtonSelector, { visible: true, timeout: 10000 });
+    
+    // التأكد من أن الزر ليس معطلاً
+    await page.waitForFunction(
+      (selector) => !document.querySelector(selector).hasAttribute('disabled'),
+      { timeout: 10000 },
+      submitButtonSelector
+    );
+    console.log("Submit button is enabled. Clicking...");
     await page.click(submitButtonSelector);
 
     console.log(`✅ Comment posted successfully on: ${videoUrl}`);
   } catch (error) {
     console.error(`❌ Failed to comment on ${videoUrl}:`, error.message);
+    // لأغراض التشخيص، سنقوم بحفظ لقطة شاشة عند حدوث خطأ
+    const errorScreenshotPath = `./error_screenshot_${Date.now()}.png`;
+    await page.screenshot({ path: errorScreenshotPath, fullPage: true });
+    console.log(`📸 Screenshot saved to ${errorScreenshotPath}`);
   } finally {
     await page.close();
   }
