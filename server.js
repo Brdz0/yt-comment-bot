@@ -20,10 +20,19 @@ const CONFIG = {
   // نص التعليق الذي سيتم نشره
   commentText: `**السلام عليكم أخوي عبدالله,🖐🏼
 اتمنى انك تقدر جهودي بكتابة هاذا التعليق,
-حاولت اجمعلك كل الالعاب الي تكون قريبه لقلبك وقلبنا وتكون شبيهه ب
-(Little Nightmare و Planet of Lana)،
-…
-لو سمحتو حطوا لايك عشان يوصله ويشوفه 👍**`,
+حاولت اجمعلك كل الالعاب الي تكون قريبه لقلبك وقلبنا وتكون شبيهه بـ
+(Little Nightmare و Planet of Lana)
+
+شوف هاي العبتين اقرب ثنتين فيهم
+(Beyond The Darkness و One Last Breath)
+
+وكمل شوف باقي الالعاب، أتمنى تجربهم:
+Airhead – Seen – Unravel – Arise – Silt – Somerville – Planet Alpha – Neva – The Strange City – Gloomy Eyes – Bionic Bay – White Shadows – FAR: Lone Sails – In His Time – SELINI(2026) – MOONY:Black_Lotus – NODE: The Last Favor of the Antarii – Orphans – Once Upon A Puppet – Double Shoulders – Beyond The Darkness – BREAKER: INITIATING – Gift – Emil – My Shadow
+
++ في جزء جديد من Planet of Lana بينزل 2026 لا تنسى تنزل عنها 😊👍
+
+هالنوع من المحتوى اللي تنزله ممتع جدًا،
+لو سمحتوا حطوا لايك عشان يوصله ويشوفه 👍**`,
   // كلمة سر للتحقق من أن الإشعار قادم من يوتيوب (سنضبطها لاحقًا)
   verifyToken: process.env.VERIFY_TOKEN || "your-strong-secret-token",
   // إعدادات Puppeteer (البوت)
@@ -87,38 +96,63 @@ async function getBrowser() {
   return browser;
 }
 
-// دالة التعليق على الفيديو
+// دالة التعليق على الفيديو (نسخة محسّنة وصبورة)
 async function commentOnVideo(videoUrl) {
   console.log(`▶️ Starting comment process for: ${videoUrl}`);
   const b = await getBrowser();
   const page = await b.newPage();
+  await page.setViewport({ width: 1280, height: 800 });
   await page.setRequestInterception(true);
   page.on('request', (req) => (['image', 'font', 'media'].includes(req.resourceType()) ? req.abort() : req.continue()));
 
   try {
-    await page.goto(videoUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(videoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // تحقق من تسجيل الدخول
-    const isLoggedIn = !(await page.$('a[href*="accounts.google.com/ServiceLogin"]'));
-    if (!isLoggedIn) {
-      throw new Error("User not logged in. Please run locally with HEADLESS=false to log in.");
+    // --- جديد: التعامل مع نافذة الموافقة على ملفات تعريف الارتباط ---
+    try {
+      const consentButtonSelector = 'button[aria-label="Accept all"]';
+      const consentButton = await page.waitForSelector(consentButtonSelector, { timeout: 5000 });
+      if (consentButton) {
+        console.log("Found cookie consent button. Clicking...");
+        await consentButton.click();
+        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+        console.log("Cookie consent accepted.");
+      }
+    } catch (e) {
+      console.log("Cookie consent pop-up not found, continuing...");
     }
+    // -------------------------------------------------------------
 
-    // التمرير للأسفل لتحميل قسم التعليقات
-    await page.evaluate(() => window.scrollBy(0, 800));
-    await page.waitForSelector("#comments", { timeout: 15000 });
+    // --- جديد: التحقق إذا كانت التعليقات معطلة ---
+    const commentsDisabled = await page.evaluate(() => {
+      const disabledText = document.querySelector('#message.ytd-message-renderer');
+      return disabledText && disabledText.innerText.toLowerCase().includes('comments are turned off');
+    });
+    if (commentsDisabled) {
+      throw new Error("Comments are turned off for this video.");
+    }
+    // -------------------------------------------------
 
-    // النقر على حقل التعليق
-    await page.waitForSelector("#placeholder-area", { timeout: 10000 });
-    await page.click("#placeholder-area");
+    // تحسين: التمرير إلى قسم التعليقات مباشرة
+    await page.evaluate(() => {
+      const commentsElement = document.querySelector('#comments');
+      if (commentsElement) {
+        commentsElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
 
-    // كتابة التعليق
-    await page.waitForSelector("#contenteditable-root", { timeout: 10000 });
-    await page.type("#contenteditable-root", CONFIG.commentText, { delay: 20 });
+    // زيادة مدة الانتظار واستخدام محددات أكثر قوة
+    const placeholderSelector = '#placeholder-area';
+    await page.waitForSelector(placeholderSelector, { timeout: 20000 }); // زيادة الوقت إلى 20 ثانية
+    await page.click(placeholderSelector);
 
-    // إرسال التعليق
-    await page.waitForSelector("#submit-button", { timeout: 10000 });
-    await page.click("#submit-button");
+    const editorSelector = '#contenteditable-root';
+    await page.waitForSelector(editorSelector, { timeout: 15000 });
+    await page.type(editorSelector, CONFIG.commentText, { delay: 50 });
+
+    const submitButtonSelector = '#submit-button';
+    await page.waitForSelector(submitButtonSelector, { visible: true, timeout: 10000 });
+    await page.click(submitButtonSelector);
 
     console.log(`✅ Comment posted successfully on: ${videoUrl}`);
   } catch (error) {
@@ -127,6 +161,7 @@ async function commentOnVideo(videoUrl) {
     await page.close();
   }
 }
+
 
 // دالة الاشتراك في القنوات
 async function subscribeAll() {
